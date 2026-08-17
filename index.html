@@ -380,15 +380,8 @@
       setTimeout(launchRandomShootingStar, 200);
     }
 
-    // 画面クリック時は「流れ星」だけを発生させる
     window.addEventListener('click', (e) => {
       shootingStars.push(new ShootingStar(e.clientX, e.clientY));
-    });
-
-    window.addEventListener('touchstart', (e) => {
-      if (e.touches.length > 0) {
-        shootingStars.push(new ShootingStar(e.touches[0].clientX, e.touches[0].clientY));
-      }
     });
 
     // アニメーションループ
