@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel Bonfire</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #05040a;
+      font-family: 'Courier New', Courier, monospace;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* キャンバスを全画面に拡張（ピクセルアート表示を保持） */
+    #fireCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      display: block;
+    }
+
+    /* UIレイヤー (操作エリア以外のクリックイベントを通す設定) */
+    .ui-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20px;
+    }
+
+    /* 画面右上のBGMコントロール */
+    .bgm-controls {
+      align-self: flex-end;
+      pointer-events: auto;
+      background: rgba(18, 14, 28, 0.7);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 10px 16px;
+      border-radius: 30px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    }
+
+    button#bgmBtn {
+      background: #e65c00;
+      color: #fff;
+      border: none;
+      padding: 6px 14px;
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: bold;
+      border-radius: 20px;
+      cursor: pointer;
+      box-shadow: 0 3px #993d00;
+      transition: all 0.1s ease;
+    }
+
+    button#bgmBtn:active {
+      box-shadow: 0 1px #993d00;
+      transform: translateY(2px);
+    }
+
+    button#bgmBtn.off {
+      background: #4a4a5a;
+      box-shadow: 0 3px #2a2a3a;
+    }
+
+    .volume-container {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #fff;
+      font-size: 0.9rem;
+    }
+
+    input[type=range] {
+      width: 80px;
+      accent-color: #ffaa55;
+      cursor: pointer;
+    }
+
+    /* 画面下部の案内テキスト */
+    .instruction {
+      align-self: center;
+      color: rgba(255, 255, 255, 0.75);
+      font-size: 0.95rem;
+      letter-spacing: 2px;
+      text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+      margin-bottom: 15px;
+      animation: pulse 2.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 0.9; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 全画面ドット絵キャンバス -->
+  <canvas id="fireCanvas"></canvas>
+
+  <!-- キャンバス上のUI層 -->
+  <div class="ui-layer">
+    <div class="bgm-controls">
+      <button id="bgmBtn" class="off">BGM OFF</button>
+      <div class="volume-container">
+        <span>🔊</span>
+        <input type="range" id="volume" min="0" max="1" step="0.01" value="0.5">
+      </div>
+    </div>
+
+    <div class="instruction">Click the screen</div>
+  </div>
+
+  <!-- BGM音声要素 -->
+  <audio id="bgm" loop src="fire.mp3"></audio>
+
+  <script>
+    const canvas = document.getElementById('fireCanvas');
+    const ctx = canvas.getContext('2d');
+    const bgm = document.getElementById('bgm');
+    const bgmBtn = document.getElementById('bgmBtn');
+    const volumeSlider = document.getElementById('volume');
+
+    // ピクセル解像度用スケール (大きいほどドットが粗くなります)
+    const PIXEL_SCALE = 4;
+    let width, height;
+    let centerX, centerY;
+
+    // 状態管理
+    let isPressing = false;
+    let fireSize = 1.0;
+    const targetSizePress = 2.4;
+    const baseSize = 1.0;
+
+    const particles = [];
+    const stars = [];
+
+    // ウィンドウサイズに合わせてキャンバスの内部低解像度を更新
+    function resizeCanvas() {
+      width = Math.ceil(window.innerWidth / PIXEL_SCALE);
+      height = Math.ceil(window.innerHeight / PIXEL_SCALE);
+      canvas.width = width;
+      canvas.height = height;
+
+      centerX = Math.floor(width / 2);
+      centerY = Math.floor(height * 0.78);
+
+      // 星を再配置
+      stars.length = 0;
+      const starCount = Math.floor((width * height) / 250);
+      for (let i = 0; i < starCount; i++) {
+        stars.push({
+          x: Math.floor(Math.random() * width),
+          y: Math.floor(Math.random() * (height * 0.7)),
+          brightness: Math.random()
+        });
+      }
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // --------------------------------------------------
+    // 炎・火の粉パティクル
+    // --------------------------------------------------
+    class Particle {
+      constructor(isSpark = false) {
+        this.reset(isSpark);
+      }
+
+      reset(isSpark = false) {
+        this.isSpark = isSpark;
+        const spread = 8 * fireSize;
+        this.x = centerX + (Math.random() - 0.5) * spread;
+        this.y = centerY + (Math.random() - 0.5) * 4;
+
+        if (this.isSpark) {
+          this.vx = (Math.random() - 0.5) * 1.0;
+          this.vy = - (Math.random() * 1.5 + 0.6);
+          this.life = Math.random() * 25 + 10;
+          this.maxLife = this.life;
+          this.size = 1;
+        } else {
+          this.vx = (Math.random() - 0.5) * 0.5;
+          this.vy = - (Math.random() * 0.9 + 0.5) * Math.sqrt(fireSize);
+          this.maxLife = (Math.random() * 18 + 16) * fireSize;
+          this.life = this.maxLife;
+          this.size = Math.floor((Math.random() * 3 + 2) * fireSize);
+        }
+      }
+
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.life--;
+
+        if (!this.isSpark) {
+          this.vx += (Math.random() - 0.5) * 0.12;
+        }
+
+        if (this.life <= 0) {
+          this.reset(Math.random() < 0.22);
+        }
+      }
+
+      draw() {
+        if (this.life <= 0) return;
+
+        const progress = this.life / this.maxLife;
+        let color;
+
+        if (this.isSpark) {
+          color = '#ffdd55';
+        } else {
+          if (progress > 0.7) color = '#ffffff';
+          else if (progress > 0.4) color = '#ffcc00';
+          else if (progress > 0.2) color = '#ff5500';
+          else color = '#880000';
+        }
+
+        ctx.fillStyle = color;
+        const px = Math.floor(this.x);
+        const py = Math.floor(this.y);
+        const pSize = Math.max(1, Math.floor(this.size * progress));
+
+        ctx.fillRect(px, py, pSize, pSize);
+      }
+    }
+
+    // 初期パティクル設定
+    for (let i = 0; i < 80; i++) {
+      particles.push(new Particle(i % 5 === 0));
+    }
+
+    // --------------------------------------------------
+    // メイン描画ループ
+    // --------------------------------------------------
+    function render() {
+      // 火の大きさのスムーズ移行
+      const targetSize = isPressing ? targetSizePress : baseSize;
+      fireSize += (targetSize - fireSize) * 0.06;
+
+      // 1. 夜空背景
+      ctx.fillStyle = '#06050e';
+      ctx.fillRect(0, 0, width, height);
+
+      // 2. 地面
+      ctx.fillStyle = '#120f1d';
+      ctx.fillRect(0, centerY, width, height - centerY);
+
+      // 3. 星
+      stars.forEach(star => {
+        if (Math.random() < 0.03) star.brightness = Math.random();
+        ctx.fillStyle = `rgba(255, 255, 255, ${star.brightness * 0.8})`;
+        ctx.fillRect(star.x, star.y, 1, 1);
+      });
+
+      // 4. 焚き火の環境光
+      const glowRadius = Math.floor((25 + Math.random() * 6) * fireSize);
+      const gradient = ctx.createRadialGradient(centerX, centerY, 2, centerX, centerY, glowRadius);
+      gradient.addColorStop(0, `rgba(255, 120, 30, ${0.15 * Math.min(1.5, fireSize)})`);
+      gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      // 5. 薪（ドット絵）
+      ctx.fillStyle = '#3a2012';
+      ctx.fillRect(centerX - 10, centerY, 12, 4);
+      ctx.fillRect(centerX - 12, centerY + 2, 12, 4);
+      ctx.fillRect(centerX - 2, centerY, 12, 4);
+      ctx.fillRect(centerX, centerY + 2, 12, 4);
+
+      // 6. 炎パティクル描画
+      const activeCount = Math.floor(particles.length * Math.min(1.0, fireSize / 1.1));
+      for (let i = 0; i < activeCount; i++) {
+        particles[i].update();
+        particles[i].draw();
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    render();
+
+    // --------------------------------------------------
+    // 操作・イベントハンドラ
+    // --------------------------------------------------
+    
+    // 画面全体の押下判定
+    const startPress = (e) => {
+      // BGMコントロールエリアの操作時は火を大きくしない
+      if (e.target.closest('.bgm-controls')) return;
+      isPressing = true;
+    };
+
+    const endPress = () => {
+      isPressing = false;
+    };
+
+    window.addEventListener('mousedown', startPress);
+    window.addEventListener('mouseup', endPress);
+    window.addEventListener('mouseleave', endPress);
+
+    window.addEventListener('touchstart', startPress, { passive: true });
+    window.addEventListener('touchend', endPress);
+    window.addEventListener('touchcancel', endPress);
+
+    // BGMコントロール
+    volumeSlider.addEventListener('input', (e) => {
+      bgm.volume = e.target.value;
+    });
+
+    bgmBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (bgm.paused) {
+        bgm.play().then(() => {
+          bgmBtn.textContent = 'BGM ON';
+          bgmBtn.classList.remove('off');
+        }).catch(() => {
+          alert('fire.mp3 が読み込めませんでした。HTMLと同じフォルダに配置してください。');
+        });
+      } else {
+        bgm.pause();
+        bgmBtn.textContent = 'BGM OFF';
+        bgmBtn.classList.add('off');
+      }
+    });
+  </script>
+</body>
+</html>
