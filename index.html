@@ -68,7 +68,69 @@
       z-index: 3;
       user-select: none;
       pointer-events: none;
-      text-shadow: 0 0 10px rgba(0, 0, 0, 0.25);
+      text-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+    }
+
+    /* オーディオコントロールエリア */
+    .audio-container {
+      position: absolute;
+      top: 25px;
+      right: 25px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 8px 16px;
+      border-radius: 30px;
+      backdrop-filter: blur(8px);
+    }
+
+    .audio-control {
+      background: transparent;
+      border: none;
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      outline: none;
+    }
+
+    /* 音量スライダーのスタイリング */
+    .volume-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 80px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.3);
+      outline: none;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .volume-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+    }
+
+    .volume-slider::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
     }
   </style>
 </head>
@@ -79,6 +141,19 @@
   <div class="horizon"></div>
   <div class="ui-overlay">Click the screen</div>
 
+  <!-- Sound Controls -->
+  <div class="audio-container" id="audioContainer">
+    <button id="audioBtn" class="audio-control">
+      <span id="audioIcon">🎵</span> <span id="audioText">BGM</span>
+    </button>
+    <input type="range" id="volumeSlider" class="volume-slider" min="0" max="1" step="0.01" value="0.3">
+  </div>
+
+  <!-- ローカルの bgm.mp3 を指定 -->
+  <audio id="bgm" loop preload="auto">
+    <source src="bgm.mp3" type="audio/mpeg">
+  </audio>
+
   <script>
     const canvas = document.getElementById('space');
     const ctx = canvas.getContext('2d');
@@ -87,19 +162,66 @@
     let stars = [];
     let shootingStars = [];
 
-    // 地球の自転パラメータ（回転中心と速度）
+    // 地球の自転パラメータ
     let rotationCenter = { x: 0, y: 0 };
-    let skyAngle = 0;
-    const rotationSpeed = -0.00015; // 空が移動するスピード（数値を上げると速くなります）
+    const rotationSpeed = 0.00015;
+
+    // --- BGM・音量関連の制御 ---
+    const bgm = document.getElementById('bgm');
+    const audioBtn = document.getElementById('audioBtn');
+    const audioIcon = document.getElementById('audioIcon');
+    const audioText = document.getElementById('audioText');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const audioContainer = document.getElementById('audioContainer');
+
+    let isAudioPlaying = false;
+
+    bgm.volume = 0.3; // 初期音量
+
+    // BGMボタンを押した時だけ再生・一時停止を切替
+    function toggleAudio() {
+      if (isAudioPlaying) {
+        bgm.pause();
+        audioIcon.textContent = '🔇';
+        audioText.textContent = 'BGM';
+        isAudioPlaying = false;
+      } else {
+        bgm.play().then(() => {
+          audioIcon.textContent = bgm.volume === 0 ? '🔇' : '🔊';
+          audioText.textContent = 'BGM';
+          isAudioPlaying = true;
+        }).catch(err => console.log("Audio play error:", err));
+      }
+    }
+
+    // 音量スライダーのイベント
+    volumeSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      bgm.volume = val;
+      
+      if (isAudioPlaying) {
+        audioIcon.textContent = val === 0 ? '🔇' : '🔊';
+      }
+    });
+
+    // コントロールエリア内をクリックした時は流れ星を出さない
+    audioContainer.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+    audioContainer.addEventListener('touchstart', (e) => {
+      e.stopPropagation();
+    });
+
+    // BGMのON/OFFはボタンのみで切り替え
+    audioBtn.addEventListener('click', () => {
+      toggleAudio();
+    });
 
     // 画面サイズ調整
     function resize() {
       width = canvas.width = window.innerWidth;
       height = canvas.height = window.innerHeight;
-      
-      // 北極星（回転軸）の位置を画面右上のやや上に設定
-      rotationCenter = { x: width * 0.5, y: height  };
-      
+      rotationCenter = { x: width * 0.5, y: height * 0.01 };
       initStars();
     }
 
@@ -112,7 +234,6 @@
       }
 
       reset() {
-        // 回転中心からの距離（半径）と初期角度を設定
         const maxRadius = Math.sqrt(Math.pow(width * 1.5, 2) + Math.pow(height * 1.5, 2));
         this.radius = Math.random() * maxRadius;
         this.angle = Math.random() * Math.PI * 2;
@@ -134,21 +255,16 @@
       }
 
       update() {
-        // 自転による角度移動
         this.angle += rotationSpeed;
-
-        // まばたきアニメーション
         this.twinkleFactor += this.twinkleSpeed;
         this.alpha = this.baseAlpha + Math.sin(this.twinkleFactor) * 0.3;
         if (this.alpha < 0) this.alpha = 0;
       }
 
       draw() {
-        // 極座標から画面上の(x, y)座標へ変換
         const x = rotationCenter.x + Math.cos(this.angle) * this.radius;
         const y = rotationCenter.y + Math.sin(this.angle) * this.radius;
 
-        // 画面外（見えない場所）は描画をスキップ
         if (x < -20 || x > width + 20 || y < -20 || y > height + 20) return;
 
         ctx.save();
@@ -228,7 +344,6 @@
 
         ctx.save();
         
-        // 軌跡の描画
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
         ctx.lineTo(tailX, tailY);
@@ -237,7 +352,6 @@
         ctx.lineCap = 'round';
         ctx.stroke();
 
-        // 流星先端の発光
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.size * 1.5, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 255, 255, ${headAlpha})`;
@@ -252,13 +366,11 @@
     // 初期化
     function initStars() {
       stars = [];
-      // 回転に対応して密度の高い星空を生成
       const starCount = Math.floor((width * height) / 400);
       for (let i = 0; i < starCount; i++) {
         stars.push(new Star());
       }
     }
-    
 
     // ランダム生成
     function launchRandomShootingStar() {
@@ -268,7 +380,7 @@
       setTimeout(launchRandomShootingStar, 200);
     }
 
-    // クリック・タッチイベント
+    // 画面クリック時は「流れ星」だけを発生させる
     window.addEventListener('click', (e) => {
       shootingStars.push(new ShootingStar(e.clientX, e.clientY));
     });
@@ -281,16 +393,13 @@
 
     // アニメーションループ
     function animate() {
-      // 画面クリア
       ctx.clearRect(0, 0, width, height);
 
-      // 背景の星（地球の自転に伴う移動）
       for (const star of stars) {
         star.update();
         star.draw();
       }
 
-      // 流れ星
       for (let i = shootingStars.length - 1; i >= 0; i--) {
         const shootingStar = shootingStars[i];
         shootingStar.update();
